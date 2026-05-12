@@ -132,11 +132,14 @@ AURIS_OFFLINE=1 AURIS_WHEELS_DIR=/path/to/wheels bash reader/setup.sh
 Auris/
 |-- README.md
 |-- LICENSE
+|-- wheels/          ← offline wheel cache (optional)
 `-- reader/
     |-- app.py
-    |-- setup.py
-    |-- run.bat
-    |-- run.sh
+    |-- setup.py     ← cross-platform installer (called by setup.bat / setup.sh)
+    |-- setup.bat    ← Windows installer
+    |-- setup.sh     ← Linux / macOS installer
+    |-- run.bat      ← Windows launcher
+    |-- run.sh       ← Linux / macOS launcher
     |-- requirements.txt
     |-- core/
     |-- static/

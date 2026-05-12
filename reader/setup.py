@@ -255,9 +255,9 @@ def install_omnivoice():
 
 
 def install_reader_deps():
-    step("Installing Auris reader dependencies")
+    step("Installing remaining dependencies from requirements.txt")
     pip_install("-r", str(APP_DIR / "requirements.txt"))
-    ok("Reader dependencies installed")
+    ok("Dependencies installed")
 
 
 def install_spacy_model():

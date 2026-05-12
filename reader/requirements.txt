@@ -23,7 +23,7 @@ omnivoice>=0.1.5
 
 torch>=2.4
 torchaudio>=2.4
-transformers>=5.3.0
+transformers==5.3.0
 accelerate>=1.13.0
 gradio>=6.0
 tensorboardX>=2.6
