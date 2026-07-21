@@ -176,6 +176,24 @@ The plan is to connect to any OpenAI-compatible language model endpoint as an em
 
 This would fix the main remaining gap: narration sentences that carry emotional weight without any keyword signal, and multi-emotion moments where the current system can only pick one tag.
 
+### Pluggable TTS backends: Kokoro, Qwen-TTS, Fish Audio Pro
+
+OmniVoice is the only synthesis backend today, wired directly into `core/tts_engine.py`. The plan is to pull the engine behind a small interface (`load`, `generate`, `status`) so Settings can pick a backend per install instead of assuming OmniVoice:
+
+- **Kokoro TTS** — an ~82M-parameter open-weight model. Much lower VRAM/CPU cost than OmniVoice, making it the recommended default for machines without a GPU or with limited RAM. Trade-off: fewer voice-design controls, no reference-audio cloning.
+- **Qwen-TTS** — Alibaba's TTS model family. Strong multilingual coverage, useful for books in languages OmniVoice handles poorly.
+- **Fish Audio Pro** — Fish Speech's hosted/pro tier with high-fidelity voice cloning. Since this is a network-dependent option, it would be opt-in only and clearly flagged in Settings as breaking the "everything runs locally" guarantee the rest of the app holds to.
+- **Integration point:** each backend implements the same interface consumed by `app.py` and Voice Studio, so per-character/per-narrator instruct strings, reference-audio upload, and the caching layer in `core/tts_engine.py` keep working unmodified. The model-download flow already built for OmniVoice (Settings → Hugging Face downloader, including the new auto-download-on-missing option) extends naturally to Kokoro and Qwen-TTS since both ship weights on Hugging Face.
+
+### Docker support
+
+Right now Auris only runs from a project-local `.venv` via the installer scripts. A `Dockerfile` (plus a `docker-compose.yml` for the common case of mounting a model directory and a data volume) would let users skip Python/CUDA setup entirely:
+
+- **Base images:** a CPU image and a CUDA-enabled image (matching the installer's existing CUDA/CPU detection), so GPU inference still works via `--gpus all` / `nvidia-container-toolkit`.
+- **Volumes:** `reader/data` (library + settings) and the OmniVoice model directory mounted from the host, so the container stays disposable while books, progress, and downloaded weights persist.
+- **Networking:** the Flask dev server binds to `127.0.0.1` today; the container image would need to bind `0.0.0.0` behind an explicit opt-in flag, since this app has no auth layer and isn't meant to be exposed beyond localhost by default.
+- **Model download inside the container:** the auto-download setting (Settings → OmniVoice Model) is the natural fit here — point a fresh container at an empty model volume and let it fetch weights on first boot instead of requiring a pre-populated mount.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
