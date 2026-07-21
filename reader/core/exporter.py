@@ -97,7 +97,9 @@ _ASS_CHAR_STYLE = (
 
 def _hex_to_ass(hex_color: str) -> str:
     """Convert #RRGGBB → AABBGGRR (ASS BGR order, alpha=00)."""
-    h = hex_color.lstrip('#')
+    h = (hex_color or '').lstrip('#')
+    if len(h) != 6:
+        h = 'FFFFFF'
     r, g, b = h[0:2], h[2:4], h[4:6]
     return f'{b}{g}{r}'.upper()
 
@@ -163,11 +165,19 @@ def build_timeline(segments_db: list[dict]) -> list[dict]:
     """
     segments_db: rows from tts_segments with audio_path + duration_sec.
     Returns same list enriched with t_start / t_end fields.
+
+    Segments with no generated audio (TTS failed for that line) are
+    skipped entirely — _merge_wavs() likewise skips them when building the
+    merged audio, so including them here would advance the subtitle cursor
+    past a gap that doesn't actually exist in the audio, desyncing every
+    later timestamp.
     """
     timeline = []
     cursor = 0.0
     for seg in segments_db:
-        dur = seg.get('duration_sec') or 0.0
+        if not seg.get('audio_path') or not seg.get('duration_sec'):
+            continue
+        dur = seg['duration_sec']
         timeline.append({**seg, 't_start': cursor, 't_end': cursor + dur})
         cursor += dur + 0.25  # 250ms gap
     return timeline

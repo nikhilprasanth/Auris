@@ -28,6 +28,7 @@ DEFAULTS: dict = {
     'model_path': _DEFAULT_MODEL_PATH,
     'model_repo': 'k2-fsa/OmniVoice',
     'hf_endpoint': '',                 # e.g. https://hf-mirror.com for restricted networks
+    'auto_download_model': False,      # fetch weights from HuggingFace automatically if missing locally
 
     # Narrator
     'narrator_instruct': DEFAULT_NARRATOR_INSTRUCT,
@@ -141,7 +142,6 @@ def _do_download(repo_id: str, dest_dir: str, hf_endpoint: str):
             os.environ['HF_ENDPOINT'] = hf_endpoint
 
         from huggingface_hub import list_repo_files, hf_hub_download
-        import huggingface_hub
 
         _set_dl('downloading', 2, 'Listing repository files…', dest_dir)
 

@@ -354,6 +354,9 @@ def _find_speaker(sentence: str, dialogue_map: dict, last_speaker: str | None) -
         for key, name in dialogue_map.items():
             if key in snippet or snippet in key:
                 return name
+        # No explicit attribution nearby — assume the conversation is still
+        # with the same speaker rather than falling back to the narrator.
+        return last_speaker
 
     return None
 

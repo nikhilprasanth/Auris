@@ -5,6 +5,7 @@ Offline Ebook Reader — Flask application.
 import base64
 import logging
 import os
+import re
 import threading
 import uuid
 
@@ -12,6 +13,7 @@ from flask import (
     Flask, jsonify, render_template, request,
     send_file,
 )
+from werkzeug.utils import secure_filename
 
 from core.database import init_db, get_conn
 from core.tts_engine import TTSEngine
@@ -268,7 +270,8 @@ def import_book():
     if ext not in ('epub', 'pdf', 'txt'):
         return jsonify({'error': f'Unsupported format: {ext}'}), 400
 
-    dest = os.path.join(UPLOAD_DIR, f.filename)
+    safe_name = secure_filename(f.filename) or f'book.{ext}'
+    dest = os.path.join(UPLOAD_DIR, f'{uuid.uuid4().hex}_{safe_name}')
     f.save(dest)
 
     try:
@@ -366,7 +369,21 @@ def book_cover(book_id):
 @app.route('/api/books/<int:book_id>', methods=['DELETE'])
 def delete_book(book_id):
     with get_conn() as conn:
+        book = conn.execute(
+            'SELECT file_path, narrator_ref_audio_path FROM books WHERE id=?', (book_id,)
+        ).fetchone()
+        char_refs = conn.execute(
+            'SELECT ref_audio_path FROM characters WHERE book_id=? AND ref_audio_path IS NOT NULL',
+            (book_id,)
+        ).fetchall()
         conn.execute('DELETE FROM books WHERE id=?', (book_id,))
+
+    if book:
+        _delete_file_if_exists(book['file_path'])
+        _delete_file_if_exists(book['narrator_ref_audio_path'])
+    for row in char_refs:
+        _delete_file_if_exists(row['ref_audio_path'])
+
     return jsonify({'ok': True})
 
 
@@ -398,7 +415,7 @@ def get_chapter(book_id, chapter_id):
 
 @app.route('/api/books/<int:book_id>/progress', methods=['POST'])
 def save_progress(book_id):
-    body = request.get_json(force=True)
+    body = request.get_json(force=True) or {}
     with get_conn() as conn:
         conn.execute(
             'INSERT INTO reading_progress (book_id, chapter_id, position, updated_at) '
@@ -436,19 +453,23 @@ def list_characters(book_id):
 
 @app.route('/api/books/<int:book_id>/characters/<int:char_id>', methods=['PUT'])
 def update_character(book_id, char_id):
-    body = request.get_json(force=True)
+    body = request.get_json(force=True) or {}
     allowed = {'instruct', 'gender', 'color_hex', 'ref_audio_path'}
     updates = {k: v for k, v in body.items() if k in allowed}
+    if 'color_hex' in updates and not re.match(r'^#[0-9a-fA-F]{6}$', str(updates['color_hex'] or '')):
+        return jsonify({'error': 'color_hex must be a #RRGGBB string'}), 400
     if not updates:
         return jsonify({'error': 'Nothing to update'}), 400
+    voice_fields = {'instruct', 'ref_audio_path'} & updates.keys()
     set_clause = ', '.join(f'{k}=?' for k in updates)
     with get_conn() as conn:
         conn.execute(
             f'UPDATE characters SET {set_clause} WHERE id=? AND book_id=?',
             (*updates.values(), char_id, book_id)
         )
-    _clear_book_tts_segments(book_id)
-    return jsonify({'ok': True, 'segments_cleared': True})
+    if voice_fields:
+        _clear_book_tts_segments(book_id)
+    return jsonify({'ok': True, 'segments_cleared': bool(voice_fields)})
 
 
 @app.route('/api/books/<int:book_id>/characters/<int:char_id>/preview', methods=['POST'])
@@ -623,7 +644,7 @@ def tts_load():
 
 @app.route('/api/tts/generate', methods=['POST'])
 def tts_generate():
-    body = request.get_json(force=True)
+    body = request.get_json(force=True) or {}
     book_id = body.get('book_id')
     chapter_id = body.get('chapter_id')
     segment_index = body.get('segment_index', 0)
@@ -746,8 +767,13 @@ def _store_segments(book_id, chapter_id, segs):
             )
 
 
+_CACHE_KEY_RE = re.compile(r'^[0-9a-fA-F]{32}$')
+
+
 @app.route('/api/audio/<cache_key>')
 def serve_audio(cache_key):
+    if not _CACHE_KEY_RE.match(cache_key):
+        return '', 404
     from core.tts_engine import AUDIO_CACHE_DIR
     path = os.path.join(AUDIO_CACHE_DIR, f'{cache_key}.wav')
     if not os.path.exists(path):
@@ -815,12 +841,20 @@ def _get_chapter_segments(chapter_id, book_id):
             (book_id, chapter_id)
         ).fetchall()
     if not rows:
-        _build_segments_for_chapter(book_id, chapter_id)
-        with get_conn() as conn:
-            rows = conn.execute(
-                'SELECT * FROM tts_segments WHERE book_id=? AND chapter_id=? ORDER BY segment_index',
-                (book_id, chapter_id)
-            ).fetchall()
+        ch_lock = _get_chapter_build_lock(book_id, chapter_id)
+        with ch_lock:
+            with get_conn() as conn:
+                rows = conn.execute(
+                    'SELECT * FROM tts_segments WHERE book_id=? AND chapter_id=? ORDER BY segment_index',
+                    (book_id, chapter_id)
+                ).fetchall()
+            if not rows:
+                _build_segments_for_chapter(book_id, chapter_id)
+                with get_conn() as conn:
+                    rows = conn.execute(
+                        'SELECT * FROM tts_segments WHERE book_id=? AND chapter_id=? ORDER BY segment_index',
+                        (book_id, chapter_id)
+                    ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -1010,7 +1044,11 @@ def export_download():
     path = request.args.get('path', '')
     exports_dir = os.path.abspath(exporter.EXPORTS_DIR)
     abs_path = os.path.abspath(path)
-    if not abs_path.startswith(exports_dir):
+    try:
+        within_exports = os.path.commonpath([exports_dir, abs_path]) == exports_dir
+    except ValueError:
+        within_exports = False  # different drive on Windows, etc.
+    if not within_exports:
         return 'Forbidden', 403
     if not os.path.exists(abs_path):
         return 'Not found', 404
@@ -1077,7 +1115,7 @@ def save_settings():
     body = request.get_json(force=True) or {}
     previous = app_settings.load()
     allowed = {
-        'model_source', 'model_path', 'model_repo', 'hf_endpoint',
+        'model_source', 'model_path', 'model_repo', 'hf_endpoint', 'auto_download_model',
         'narrator_instruct', 'single_narrator_mode', 'default_speed', 'audio_format',
         'subtitle_format', 'theme', 'font_size', 'font_family', 'line_height',
     }

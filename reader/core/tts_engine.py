@@ -11,6 +11,7 @@ import hashlib
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -134,6 +135,7 @@ class TTSEngine:
         self.model = None
         self._lock = threading.Lock()
         self._loading = False
+        self._downloading = False
         self._ready = False
         self._error: str | None = None
         os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
@@ -146,7 +148,15 @@ class TTSEngine:
         if self._ready:
             return {"state": "ready"}
         if self._loading:
-            return {"state": "loading"}
+            info = {"state": "loading"}
+            if self._downloading:
+                from core.settings import download_state
+
+                dl = download_state()
+                info["downloading"] = True
+                info["pct"] = dl.get("pct", 0)
+                info["message"] = dl.get("message", "Downloading model…")
+            return info
         return {
             "state": "not_loaded",
             "model_path": resolved_path,
@@ -159,9 +169,10 @@ class TTSEngine:
         threading.Thread(target=self._load, daemon=True).start()
 
     def reload(self):
-        self._ready = False
-        self._error = None
-        self.model = None
+        with self._lock:
+            self._ready = False
+            self._error = None
+            self.model = None
         self.load_async()
 
     def _load(self):
@@ -175,7 +186,7 @@ class TTSEngine:
             if not self.model_path:
                 self.model_path = _model_path_from_settings()
 
-            if not os.path.isdir(self.model_path):
+            if not os.path.isdir(self.model_path) and not self._auto_download():
                 raise FileNotFoundError(
                     f"Model not found at: {self.model_path}\n"
                     "Go to Settings to set the correct path or download the model."
@@ -200,6 +211,39 @@ class TTSEngine:
             log.error("Failed to load OmniVoice: %s", exc)
         finally:
             self._loading = False
+            self._downloading = False
+
+    def _auto_download(self) -> bool:
+        """If enabled in Settings, fetch the model from HuggingFace into
+        self.model_path and block (this runs on the background load thread)
+        until the download finishes. Returns True once the model directory
+        is present and ready to load from."""
+        from core.settings import download_state, get, start_model_download
+
+        if not get("auto_download_model", False):
+            return False
+
+        repo_id = get("model_repo", "k2-fsa/OmniVoice")
+        hf_endpoint = get("hf_endpoint", "")
+        log.info(
+            "Model not found at %s — auto-downloading %s from HuggingFace...",
+            self.model_path, repo_id,
+        )
+        self._downloading = True
+        start_model_download(repo_id, self.model_path, hf_endpoint)
+
+        try:
+            while True:
+                state = download_state()
+                status = state.get("status")
+                if status == "done":
+                    return os.path.isdir(self.model_path)
+                if status == "error":
+                    self._error = f"Auto-download failed: {state.get('message') or 'unknown error'}"
+                    return False
+                time.sleep(1.0)
+        finally:
+            self._downloading = False
 
     @staticmethod
     def _cuda_available() -> bool:
@@ -218,7 +262,18 @@ class TTSEngine:
         speed: float,
         ref_text: str | None = None,
     ) -> str:
-        payload = f"{text}|{instruct}|{ref_audio}|{ref_text}|{speed:.2f}"
+        # Character/narrator ref-audio files are re-uploaded in place at a
+        # fixed path (e.g. ref_<char_id>.wav), so the path alone can't tell
+        # a fresh clip apart from the one it replaced. Mixing in mtime makes
+        # a re-upload produce a new key instead of silently reusing the old
+        # cached generation.
+        ref_fingerprint = ""
+        if ref_audio:
+            try:
+                ref_fingerprint = str(os.path.getmtime(ref_audio))
+            except OSError:
+                pass
+        payload = f"{text}|{instruct}|{ref_audio}|{ref_fingerprint}|{ref_text}|{speed:.2f}"
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
@@ -245,10 +300,9 @@ class TTSEngine:
         speed: float = 1.0,
         num_step: int = 32,
     ) -> np.ndarray:
-        if not self._ready:
-            raise RuntimeError("Model is not loaded yet. " + (self._error or "Call load_async() first."))
-
         with self._lock:
+            if not self._ready or self.model is None:
+                raise RuntimeError("Model is not loaded yet. " + (self._error or "Call load_async() first."))
             audio_arrays = self.model.generate(
                 text=text,
                 instruct=instruct,

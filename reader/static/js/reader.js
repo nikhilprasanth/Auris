@@ -827,7 +827,7 @@ function esc(s) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-window.addEventListener('scroll', scheduleViewportProgressUpdate, { passive: true });
+document.getElementById('chapter-content').addEventListener('scroll', scheduleViewportProgressUpdate, { passive: true });
 window.addEventListener('pagehide', () => flushProgressSave({ useBeacon: true, force: true }));
 window.addEventListener('beforeunload', () => flushProgressSave({ useBeacon: true, force: true }));
 document.addEventListener('visibilitychange', () => {

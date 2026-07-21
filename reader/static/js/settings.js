@@ -14,6 +14,7 @@ async function loadSettings() {
   document.getElementById('model-repo').value  = _settings.model_repo  || 'k2-fsa/OmniVoice';
   document.getElementById('dl-dest').value     = _settings.model_path  || '';
   document.getElementById('hf-endpoint').value = _settings.hf_endpoint || '';
+  document.getElementById('auto-download-model').checked = Boolean(_settings.auto_download_model);
   toggleSource(src);
 
   // Narrator
@@ -215,6 +216,7 @@ async function saveSettings() {
     model_path:        document.getElementById('model-path').value.trim(),
     model_repo:        document.getElementById('model-repo').value.trim(),
     hf_endpoint:       document.getElementById('hf-endpoint').value.trim(),
+    auto_download_model: document.getElementById('auto-download-model').checked,
     narrator_instruct: document.getElementById('narrator-instruct').value.trim(),
     single_narrator_mode: document.getElementById('default-single-narrator-mode').checked,
     audio_format:      document.getElementById('audio-format').value,

@@ -35,7 +35,8 @@ async function pollModelStatus() {
       badge.classList.add('badge-ready');
       return;
     } else if (s.state === 'loading') {
-      badge.textContent = 'TTS Loading';
+      badge.textContent = s.downloading ? `Downloading model… ${s.pct || 0}%` : 'TTS Loading';
+      badge.title = s.downloading ? (s.message || '') : '';
       badge.classList.add('badge-loading');
     } else if (s.state === 'error') {
       badge.textContent = 'TTS Error';

@@ -25,6 +25,16 @@
         </div>
         <span id="path-status" class="status-hint"></span>
       </div>
+      <div class="setting-row">
+        <label class="narrator-mode-row">
+          <input type="checkbox" id="auto-download-model">
+          <span>Automatically download from HuggingFace if this path doesn't have the model</span>
+        </label>
+        <span class="muted" style="font-size:.78rem">
+          Uses the repository and mirror endpoint from the Download panel below. Kicks in the next
+          time the TTS engine loads and the local path is missing or empty.
+        </span>
+      </div>
     </div>
 
     <div id="panel-download" class="sub-panel hidden">
